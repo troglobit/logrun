@@ -1,0 +1,290 @@
+#!/usr/bin/perl
+#
+# Logrun monitors your logfiles for a set of regexps and performs an action
+# when a match is found.  E.g., a RAID controller warning sends an email to
+# the sysadmin, or blocks an IP# after too many login failures.
+# The Possibilities are endless.
+#
+# Logrun is based on the excellent authfail script by Bartosz M. Krajnik.
+#
+# Copyright (C) 2002-2005 Bartosz M. Krajnik <bmk@bmk.bz>
+# Copyright (C) 2005 Joachim Nilsson <joachim.nilsson@vmlinux.org>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
+# You can also view it online at http://www.gnu.org/licenses/gpl.html
+#
+
+use POSIX 'setsid';
+use Fcntl;
+use Sys::Syslog;
+use Mail::Mailer;
+
+require "/etc/logrun.conf";
+
+
+check_files();
+daemonize();
+restart_firewall();
+
+while(1) {
+    monitor_logfile();
+    sleep(1);
+}
+
+
+# Greplog engine.
+# Add your own regexps and calls to useful functions here.
+sub monitor_logfile
+{
+    open(LOGFILE, "$logfile") or syslog("err", "Can't read from file $logfile") and die();
+
+    while ($txt = <LOGFILE>) {
+        chomp($txt);
+
+        # Failed password for invalid user (.*) from (.*) port (.*)$
+        # Jun 12 18:31:11 mail sshd[24928]: Failed password for invalid user xxxx from 1.1.1.1 port 3133 ssh2
+        # Failed password for (.*) from (.*) port (.*)$
+        # Jun 12 12:24:44 mail sshd[14123]: Failed password for xxxx from 1.1.1.1 port 1026 ssh2
+        # authentication failed for user (.*) - (.*)$
+        # Jun  7 09:53:09 mail spop3d[20947]: authentication failed for user xxxx - 1.1.1.1
+        # Illegal user (.*) from (.*)$
+        # authentication failure; logname= uid=0 euid=0 tty=ssh ruser= rhost=(.*) user=(.*)
+        # Jun 12 22:47:31 mail su(pam_unix)[11777]: authentication failure; logname= uid=1000 euid=0 tty=pts/7 ruser=xxxx rhost=  user=root
+        if( $txt =~ /(Failed password for invalid user|Failed password for) (.*) from (.*) port (.*) ssh2$/
+            or
+            $txt =~ /(authentication failed for user) (.*) - (.*)$/
+            or
+            $txt =~ /(Illegal user) (.*) from (.*)$/
+            or
+            $txt =~ /(authentication) failure;(.*) rhost=(.*) user=(.*)$/) {
+            $ip = $3;
+            if($ip ne ' ') {
+                if(update_failfile($ip)) {
+                    update_firewall($ip);
+                }
+            }
+        }
+        # cpqarray log messages
+        if( $txt =~ /(Non Fatal error on ida\/c\d+d\d+)$/
+            or
+            $txt =~ /(Fatal error on ida\/c\d+d\d+$/) ) {
+            $mailer = Mail::Mailer->new();
+            $mailer->open({ From    => $email,
+                            To      => $email,
+                            Subject => $1,
+                          })
+                or syslog("Can't open: $!\n") and die(); # XXX - Maybe not die here?
+            print $mailer "\ncpqarray on $hostname is reporting:\n\n\t\1\n\nHTH/Logrun";
+            $mailer->close();
+        }
+    }
+}
+
+# Sanity check of environment.
+# TODO: Recreate FIFO if not found since we're probably configured OK in syslogd.conf
+#       but udevd has removed our FIFO.  Do check syslogd.conf though before recreating.
+sub check_files
+{
+    sysopen(TMP, "$logfile", O_NONBLOCK) or die "Can't open FIFO $logfile file (RTFM): $!\n";
+    close(TMP);
+
+    open(TMP, "$failfile") or die "Can't open $failfile file (RTFM): $!\n";
+    close(TMP);
+}
+
+sub sig_term
+{
+    syslog("info", "logrun daemon shutdown");
+    unlink("$pidfile");
+    exit(0);
+}
+
+sub daemonize
+{
+    chdir '/' or die "Can't change chdir to /: $!";
+    open STDIN, '/dev/null' or die "Can't read /dev/null: $!";
+    open STDOUT, '>/dev/null' or die "Can't write to /dev/null: $!";
+    open STDERR, '>&STDOUT' or die "Can't dup stdout: $!";
+
+    if (fork()) {
+	exit(0);
+    }
+
+    setsid or die "Can't start a new session: $!";
+    local $SIG{HUP} = 'IGNORE';
+
+    #after this daemon can't take control terinal in SVR4
+    if (($pid = fork()) != 0) {
+	open(PIDFILE, ">$pidfile") or die "Can't create $pidfile: $!\n";
+	print PIDFILE "$pid";
+	close(PIDFILE);
+	chmod(0400, $pidfile);
+	exit(0);
+    }
+
+    $SIG{TERM} = \&sig_term;
+    openlog('logrun', 'pid', "$facility");
+}
+
+# Run through the failfile and DROP all listed IP# when we restart.
+# Called before while(1) to go through the failfile and
+# run update_firewall() on each IP# with too many hits.
+sub restart_firewall
+{
+    open (FAILFILE, "$failfile") or syslog("err", "Can't read from file $failfile") and die();
+
+    while(<FAILFILE>) {
+        if(/^(.*)\ (.*)$/) {
+            if($2 >= $failedattempts) {
+                update_firewall($1);
+            }
+        }
+    }
+
+    close(FAILFILE);
+}
+
+
+sub update_failfile
+{
+    $ip_tmp = shift;
+    $is_in_tmp = 0;
+    $ret_value = 0;
+
+    if(&is_in_database($ip_tmp)) {
+	return(0);
+    }
+
+    open (FAILFILE, "$failfile") or syslog("err", "Can't read from file $failfile") and die();
+    while($txt = <FAILFILE>) {
+	if($txt =~ /^$ip_tmp\ $failedattempts$/) {
+	    close(FAILFILE);
+	    return(0);
+	}
+    }
+    close(FAILFILE);
+
+
+    open (FAILFILE, "+< $failfile") or syslog("err", "Can't read from file $failfile") and die();
+    $out = '';
+
+    while($txt = <FAILFILE>) {
+
+	if($txt =~ /^$ip_tmp\ (.*)$/) {
+	    $attempts=$1;
+	    $attempts += 1;
+	    if($attempts == $failedattempts) {
+		$ret_value = 1;
+	    }
+	    $out .= sprintf "$ip_tmp $attempts\n";
+	    syslog("info", "$ip_tmp $attempts - updated attempts");
+	    $is_in_tmp = 1;
+	} else {
+	    $out .= $txt;
+	}
+
+    }
+
+    if(! $is_in_tmp) {
+	$out .= sprintf "$ip_tmp 1\n";
+	syslog("info", "$ip_tmp 1 - added to $failfile");
+    }
+
+    seek(FAILFILE, 0, 0) or syslog("err", "Can't seek() in file $failfile") and die();
+    print FAILFILE $out or syslog("err", "Can't print() to file $failfile") and die();
+    truncate(FAILFILE, tell(FAILFILE)) or syslog("err", "Can't truncate() file $failfile") and die();
+    close(FAILFILE);
+
+    if($is_in_tmp) {
+	return($ret_value);
+    }
+
+    return(0);
+}
+
+sub update_firewall
+{
+    $ipd = shift;
+
+    # HAck by Jocke, input by JRG 2005-07-02
+    # This removes any dependency on the non-working ip6tables,
+    # but keeps them in the db for future ip6tables fix.
+    if ($ipd =~ /::ffff:(.*)/) {
+        $ipd = $1;
+    }
+
+    if($ipd =~ /:/) {
+      #$status = system "$ipv6_firewall $ipd";
+      #syslog("info", "$ipv6_firewall $ipd");
+      syslog("err", "NOT running $command_ip6tables $ipd -- IPv6 addresses not fully supported -- this is an ERROR /Jocke");
+    } else {
+      $status = system "$ipv4_firewall $ipd";
+      syslog("info", "$ipv4_firewall $ipd");
+    }
+
+    if($status != 0) {
+      syslog("err", "Failed calling firewall, status $status");
+      #don't die :) only log information
+    }
+
+}
+
+sub is_in_database
+{
+    $ip_tmp1 = shift;
+    foreach $addr_tmp (@dont_add_into_database) {
+        if($addr_tmp =~ /(.*)\/(.*)/) {
+            $ip_tmp2 = $1;
+            $netmask_tmp2 = $2;
+        } else {
+            $ip_tmp2 = $addr_tmp;
+            $netmask_tmp2 = "255.255.255.255";
+        }
+        if(isInNet($ip_tmp1, $ip_tmp2, $netmask_tmp2)) {
+            syslog("info", "$ip_tmp1 found in network $ip_tmp2\/$netmask_tmp2");
+            return(1);
+        } #else do nothing
+    }
+
+    return(0);
+}
+
+sub isInNet
+{
+    my $ip = toInteger(shift);
+    my $net = toInteger(shift);
+    my $netmask = toInteger(shift);
+
+    if (($ip & $netmask) == $net) {
+        return(1);
+    } else {
+        return(0);
+    }
+}
+
+sub toInteger
+{
+    my $adress = shift;
+    my $ret = 0;
+    my @parts = split(/\./, $adress);
+
+    foreach (0, 1, 2) {
+        $ret += $parts[$_];
+        $ret *= 256;
+    }
+    $ret += $parts[3];
+
+    return($ret);
+}
