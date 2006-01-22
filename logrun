@@ -62,7 +62,7 @@ sub monitor_logfile
         # Illegal user (.*) from (.*)$
         # authentication failure; logname= uid=0 euid=0 tty=ssh ruser= rhost=(.*) user=(.*)
         # Jun 12 22:47:31 mail su(pam_unix)[11777]: authentication failure; logname= uid=1000 euid=0 tty=pts/7 ruser=xxxx rhost=  user=root
-        if( $txt =~ /(Failed password for invalid user|Failed password for) (.*) from (.*) port (.*) ssh2$/
+        if ($txt =~ /(Failed password for invalid user|Failed password for) (.*) from (.*) port (.*) ssh2$/
             or
             $txt =~ /(authentication failed for user) (.*) - (.*)$/
             or
@@ -70,16 +70,16 @@ sub monitor_logfile
             or
             $txt =~ /(authentication) failure;(.*) rhost=(.*) user=(.*)$/) {
             $ip = $3;
-            if($ip ne ' ') {
-                if(update_failfile($ip)) {
+            if ($ip ne ' ') {
+                if (update_failfile($ip)) {
                     update_firewall($ip);
                 }
             }
         }
         # cpqarray log messages
-        if( $txt =~ /(Non Fatal error on ida\/c\d+d\d+)$/
+        if ($txt =~ /(Non Fatal error on ida\/c\d+d\d+)$/
             or
-            $txt =~ /(Fatal error on ida\/c\d+d\d+$/) ) {
+            $txt =~ /(Fatal error on ida\/c\d+d\d+$/) {
             $mailer = Mail::Mailer->new();
             $mailer->open({ From    => $email,
                             To      => $email,
