@@ -77,9 +77,9 @@ sub monitor_logfile
             }
         }
         # cpqarray log messages
-        if ($txt =~ /(Non Fatal error on ida\/c\d+d\d+)$/
+        if ($txt =~ m,Non Fatal error on ida/c\d+d\d+$,
             or
-            $txt =~ /(Fatal error on ida\/c\d+d\d+$/) {
+            $txt =~ m,Fatal error on ida/c\d+d\d+$, ) {
             $mailer = Mail::Mailer->new();
             $mailer->open({ From    => $email,
                             To      => $email,
@@ -119,7 +119,7 @@ sub daemonize
     open STDERR, '>&STDOUT' or die "Can't dup stdout: $!";
 
     if (fork()) {
-	exit(0);
+        exit(0);
     }
 
     setsid or die "Can't start a new session: $!";
@@ -127,11 +127,11 @@ sub daemonize
 
     #after this daemon can't take control terinal in SVR4
     if (($pid = fork()) != 0) {
-	open(PIDFILE, ">$pidfile") or die "Can't create $pidfile: $!\n";
-	print PIDFILE "$pid";
-	close(PIDFILE);
-	chmod(0400, $pidfile);
-	exit(0);
+        open(PIDFILE, ">$pidfile") or die "Can't create $pidfile: $!\n";
+        print PIDFILE "$pid";
+        close(PIDFILE);
+        chmod(0400, $pidfile);
+        exit(0);
     }
 
     $SIG{TERM} = \&sig_term;
@@ -164,15 +164,15 @@ sub update_failfile
     $ret_value = 0;
 
     if(&is_in_database($ip_tmp)) {
-	return(0);
+        return(0);
     }
 
     open (FAILFILE, "$failfile") or syslog("err", "Can't read from file $failfile") and die();
     while($txt = <FAILFILE>) {
-	if($txt =~ /^$ip_tmp\ $failedattempts$/) {
-	    close(FAILFILE);
-	    return(0);
-	}
+        if($txt =~ /^$ip_tmp\ $failedattempts$/) {
+            close(FAILFILE);
+            return(0);
+        }
     }
     close(FAILFILE);
 
@@ -182,24 +182,24 @@ sub update_failfile
 
     while($txt = <FAILFILE>) {
 
-	if($txt =~ /^$ip_tmp\ (.*)$/) {
-	    $attempts=$1;
-	    $attempts += 1;
-	    if($attempts == $failedattempts) {
-		$ret_value = 1;
-	    }
-	    $out .= sprintf "$ip_tmp $attempts\n";
-	    syslog("info", "$ip_tmp $attempts - updated attempts");
-	    $is_in_tmp = 1;
-	} else {
-	    $out .= $txt;
-	}
+        if($txt =~ /^$ip_tmp\ (.*)$/) {
+            $attempts=$1;
+            $attempts += 1;
+            if($attempts == $failedattempts) {
+                $ret_value = 1;
+            }
+            $out .= sprintf "$ip_tmp $attempts\n";
+            syslog("info", "$ip_tmp $attempts - updated attempts");
+            $is_in_tmp = 1;
+        } else {
+            $out .= $txt;
+        }
 
     }
 
     if(! $is_in_tmp) {
-	$out .= sprintf "$ip_tmp 1\n";
-	syslog("info", "$ip_tmp 1 - added to $failfile");
+        $out .= sprintf "$ip_tmp 1\n";
+        syslog("info", "$ip_tmp 1 - added to $failfile");
     }
 
     seek(FAILFILE, 0, 0) or syslog("err", "Can't seek() in file $failfile") and die();
@@ -208,7 +208,7 @@ sub update_failfile
     close(FAILFILE);
 
     if($is_in_tmp) {
-	return($ret_value);
+        return($ret_value);
     }
 
     return(0);
