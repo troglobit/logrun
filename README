@@ -1,3 +1,20 @@
 logrun - Executes actions when a certain regexp has been found in a logfile
 ===========================================================================
 
+In its basic form it looks for various authentication failures and adds
+firewall rules to DROP IP packets from anoying visitors. Anyone familiar 
+to (Perl) regexps easily modifies the code to do whatever desirable.
+
+Failed authentication will add the callers IP in a log, counting the number
+of failed attempts. If too many, the communication is DROP:ed, a passed
+authentication will clear the entries from the log.
+
+Please configure /etc/logrun.conf to your needs, and feel free to make
+additional rules in the code.
+
+To install, run as root
+
+  perl INSTALL
+
+Feel free!
+

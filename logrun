@@ -35,7 +35,9 @@ require "/etc/logrun.conf";
 
 
 check_files();
-daemonize();
+if ($facility eq "daemon") {
+  daemonize();
+}
 restart_firewall();
 
 while(1) {
@@ -52,34 +54,57 @@ sub monitor_logfile
 
     while ($txt = <LOGFILE>) {
         chomp($txt);
+        
+        #Failed password for invalid user (.*) from (.*) port (.*)$
+        #Jun 12 .... sshd[24928]: Failed password for invalid user xxxx from 1.1.1.1 port 3133 ssh2
+        
+        #Failed password for (.*) from (.*) port (.*)$
+        #Jun 12 12:24:44 mail sshd[14123]: Failed password for xxxx from 1.1.1.1 port 1026 ssh2
+        
+        #authentication failed for user (.*) - (.*)$
+        #Jun  7 09:53:09 mail spop3d[20947]: authentication failed for user xxxx - 1.1.1.1
+        
+        #Illegal user (.*) from (.*)$
 
-        # Failed password for invalid user (.*) from (.*) port (.*)$
-        # Jun 12 18:31:11 mail sshd[24928]: Failed password for invalid user xxxx from 1.1.1.1 port 3133 ssh2
-        # Failed password for (.*) from (.*) port (.*)$
-        # Jun 12 12:24:44 mail sshd[14123]: Failed password for xxxx from 1.1.1.1 port 1026 ssh2
-        # authentication failed for user (.*) - (.*)$
-        # Jun  7 09:53:09 mail spop3d[20947]: authentication failed for user xxxx - 1.1.1.1
-        # Illegal user (.*) from (.*)$
-        # authentication failure; logname= uid=0 euid=0 tty=ssh ruser= rhost=(.*) user=(.*)
-        # Jun 12 22:47:31 mail su(pam_unix)[11777]: authentication failure; logname= uid=1000 euid=0 tty=pts/7 ruser=xxxx rhost=  user=root
-        if( $txt =~ /(Failed password for invalid user|Failed password for) (.*) from (.*) port (.*) ssh2$/
-            or
-            $txt =~ /(authentication failed for user) (.*) - (.*)$/
-            or
-            $txt =~ /(Illegal user) (.*) from (.*)$/
-            or
-            $txt =~ /(authentication) failure;(.*) rhost=(.*) user=(.*)$/) {
+        #authentication failure; logname= uid=0 euid=0 tty=ssh ruser= rhost=(.*) user=(.*)
+        ##Sep  8 10:45:58 joker sshd[20627]: Did not receive identification string from 61.70.191.56
+
+        if($txt =~ /(Failed password for illegal user|Failed password for) (.*) from (.*) port (.*) ssh2$/
+           or
+           $txt =~ /(authentication failed for user) (.*) - (.*)$/
+           or
+           $txt =~ /(Illegal user) (.*) from (.*)$/
+           or
+           $txt =~ /(authentication) failure;(.*) rhost=(.*) {2}user=(.*)$/) { # !
             $ip = $3;
             if($ip ne ' ') {
-                if(update_failfile($ip)) {
+                if(update_failfile($ip)) {  # Possibly pushing zombies
                     update_firewall($ip);
                 }
+                if (@zombies) {
+                    purge_firewall();
+                }
+            } 
+        } elsif ($txt =~ /Did not receive identification string from (.*)$/) {
+            # Block immediately.
+            syslog("info", "No ID string sent - HACK attempt, DROPPING!");
+            update_firewall($1);
+            add_failfile($1);
+
+        } elsif ($txt =~ m%Accepted keyboard-interactive/pam for (.*) from (.*) port (.*)%
+                 or
+                 $txt =~ m%Accepted password for (.*) from (.*) port (.*)%) {
+            $ip = $2;
+            if ($ip ne ' ') {
+                clean_failfile($ip);
             }
+        } elsif ($txt =~ /(Authentication failure for) (.*) from (.*)$/) {
+            syslog("warning", "Ignoring verbose 'Authentication failure for' $2 from $3. (Password mismatch?)");
         }
         # cpqarray log messages
-        if( $txt =~ /(Non Fatal error on ida\/c\d+d\d+)$/
+        if ($txt =~ m,Non Fatal error on ida/c\d+d\d+$,
             or
-            $txt =~ /(Fatal error on ida\/c\d+d\d+$/) ) {
+            $txt =~ m,Fatal error on ida/c\d+d\d+$, ) {
             $mailer = Mail::Mailer->new();
             $mailer->open({ From    => $email,
                             To      => $email,
@@ -93,8 +118,6 @@ sub monitor_logfile
 }
 
 # Sanity check of environment.
-# TODO: Recreate FIFO if not found since we're probably configured OK in syslogd.conf
-#       but udevd has removed our FIFO.  Do check syslogd.conf though before recreating.
 sub check_files
 {
     sysopen(TMP, "$logfile", O_NONBLOCK) or die "Can't open FIFO $logfile file (RTFM): $!\n";
@@ -107,6 +130,7 @@ sub check_files
 sub sig_term
 {
     syslog("info", "logrun daemon shutdown");
+    closelog();
     unlink("$pidfile");
     exit(0);
 }
@@ -119,7 +143,7 @@ sub daemonize
     open STDERR, '>&STDOUT' or die "Can't dup stdout: $!";
 
     if (fork()) {
-	exit(0);
+        exit(0);
     }
 
     setsid or die "Can't start a new session: $!";
@@ -127,11 +151,11 @@ sub daemonize
 
     #after this daemon can't take control terinal in SVR4
     if (($pid = fork()) != 0) {
-	open(PIDFILE, ">$pidfile") or die "Can't create $pidfile: $!\n";
-	print PIDFILE "$pid";
-	close(PIDFILE);
-	chmod(0400, $pidfile);
-	exit(0);
+        open(PIDFILE, ">$pidfile") or die "Can't create $pidfile: $!\n";
+        print PIDFILE "$pid";
+        close(PIDFILE);
+        chmod(0400, $pidfile);
+        exit(0);
     }
 
     $SIG{TERM} = \&sig_term;
@@ -145,8 +169,15 @@ sub restart_firewall
 {
     open (FAILFILE, "$failfile") or syslog("err", "Can't read from file $failfile") and die();
 
+    if ($command_prestart_firewall =~ /[\w]/) { 
+        $status = system "$command_prestart_firewall";
+        syslog("info", "$command_prestart_firewall $ipd");
+        if($status != 0) {
+            syslog("err", "Can't prestart firewall (RTFM)");
+        }
+    }
     while(<FAILFILE>) {
-        if(/^(.*)\ (.*)$/) {
+        if(/^(.*)\ (.*)\ (.*)$/) {
             if($2 >= $failedattempts) {
                 update_firewall($1);
             }
@@ -156,7 +187,10 @@ sub restart_firewall
     close(FAILFILE);
 }
 
-
+# Read enties and compare against argument. 
+#  If match: Update hit count and return 1 if beyond limit.
+#  Move old entries to Trash (@zombies)
+#  Else keep entry.
 sub update_failfile
 {
     $ip_tmp = shift;
@@ -164,42 +198,56 @@ sub update_failfile
     $ret_value = 0;
 
     if(&is_in_database($ip_tmp)) {
-	return(0);
+        return(0);
     }
 
     open (FAILFILE, "$failfile") or syslog("err", "Can't read from file $failfile") and die();
     while($txt = <FAILFILE>) {
-	if($txt =~ /^$ip_tmp\ $failedattempts$/) {
-	    close(FAILFILE);
-	    return(0);
-	}
+        if($txt =~ /^$ip_tmp\ $failedattempts\ (.*)$/) {
+            close(FAILFILE);
+            syslog("warning", "Calls from $ip_tmp should have been blocked.");
+            return(0);
+        }
     }
     close(FAILFILE);
 
+    my $t_time = time;
+    my $purgetime = $t_time - $blockdays * 84600;
 
     open (FAILFILE, "+< $failfile") or syslog("err", "Can't read from file $failfile") and die();
     $out = '';
+    @zombies = (); # List of hosts to purge from firewall
 
     while($txt = <FAILFILE>) {
-
-	if($txt =~ /^$ip_tmp\ (.*)$/) {
-	    $attempts=$1;
-	    $attempts += 1;
-	    if($attempts == $failedattempts) {
-		$ret_value = 1;
-	    }
-	    $out .= sprintf "$ip_tmp $attempts\n";
-	    syslog("info", "$ip_tmp $attempts - updated attempts");
-	    $is_in_tmp = 1;
-	} else {
-	    $out .= $txt;
-	}
+        if($txt =~ /^$ip_tmp\ ([0-9]+)\ (.*)$/) {
+            $attempts=$1;
+            $attempts += 1;
+            if($attempts == $failedattempts) {
+                $ret_value = 1;
+            }
+            $out .= sprintf "$ip_tmp $attempts $t_time\n";
+            syslog("info", "$ip_tmp $attempts - updated attempts");
+            $is_in_tmp = 1;
+        } elsif ($blockdays && (@t_old = split(/\s+/,$txt)) && $t_old[2] < $purgetime) {
+            # Purge logfile from inactive hosts.
+            
+            if ($t_old[1] >= $failedattempts) {
+		push(@zombies, $t_old[0]);
+	    };
+            
+            open (BLACKLIST, ">> $blacklist");
+            print BLACKLIST $txt or syslog("err", "Can't write to blacklist ($blacklist");
+            close (BLACKLIST);
+            
+        } else {
+            $out .= $txt;
+        }
 
     }
 
     if(! $is_in_tmp) {
-	$out .= sprintf "$ip_tmp 1\n";
-	syslog("info", "$ip_tmp 1 - added to $failfile");
+        $out .= sprintf "$ip_tmp 1 $t_time\n";
+        syslog("info", "$ip_tmp 1 - added to $failfile");
     }
 
     seek(FAILFILE, 0, 0) or syslog("err", "Can't seek() in file $failfile") and die();
@@ -208,12 +256,13 @@ sub update_failfile
     close(FAILFILE);
 
     if($is_in_tmp) {
-	return($ret_value);
+        return($ret_value);
     }
 
     return(0);
 }
 
+# Remove rules for cleared log entries,
 sub update_firewall
 {
     $ipd = shift;
@@ -228,10 +277,10 @@ sub update_firewall
     if($ipd =~ /:/) {
       #$status = system "$ipv6_firewall $ipd";
       #syslog("info", "$ipv6_firewall $ipd");
-      syslog("err", "NOT running $command_ip6tables $ipd -- IPv6 addresses not fully supported -- this is an ERROR /Jocke");
+      syslog("err", "NOT running $ipv6_firewall $ipd -- IPv6 addresses not fully supported -- this is an ERROR /Jocke");
     } else {
-      $status = system "$ipv4_firewall $ipd";
-      syslog("info", "$ipv4_firewall $ipd");
+        $status = system "$ipv4_firewall $ipd";
+        syslog("info", "$ipv4_firewall $ipd");
     }
 
     if($status != 0) {
@@ -240,6 +289,73 @@ sub update_firewall
     }
 
 }
+
+sub purge_firewall {
+
+    foreach $ipz (@zombies) {
+        if ($ipz =~ /::ffff:(.*)/) {
+            $ipz = $1;
+        }
+        $status = system "$ipv4_rm_firewall $ipz";
+        syslog ("info","$ipv4_rm_firewall $ipz");
+        if ($status != 0) {
+            syslog("warning", "Failed purging firewall");
+        }
+    }
+    undef @zombies;
+}
+
+sub add_failfile {
+    $ip_tmp = shift;
+
+    my $t_time = time;
+    
+    my $out = sprintf "$ip_tmp $failedattempts $t_time\n";
+    open (FAILFILE, ">> $failfile");
+    print FAILFILE $out or syslog("err", "Can't add $ip_tmp to failfile ($failfile");
+    close (FAILFILE);
+
+}
+
+sub clean_failfile {
+    $ip_tmp = shift;
+    $ret_value = 0;
+
+    if ($ip_tmp =~ /::ffff:(.*)/) {
+        $ip_tmp = $1;
+    }
+
+    open (FAILFILE, "+< $failfile") or syslog("err", "Can't read from file $failfile") and die();
+    $out = '';
+
+    while($txt = <FAILFILE>) {
+        if($txt =~ /$ip_tmp ([0-9]+) (.*)$/) {     # Regular ip v4/6
+            syslog("info", "$ip_tmp - cleared from failfile");
+            next;
+        } elsif ($txt =~ /^([a-z][a-z\.\-0-9]+)/ ) { # Exists as named host?
+            my $h_name = $1;
+            chomp ($ip_lookup = `host $h_name`);
+            if ($ip_lookup =~ /has address ([0-9\.]+)/) {
+                $ip = $1;
+                if ($ip eq $ip_tmp) {
+                    syslog("info", "$h_name ($ip) - cleared from failfile");
+                    next;
+                }
+            } else {
+                syslog("warning","$ip_lookup");
+            }
+        }
+        $out .= $txt;
+    }
+
+    seek(FAILFILE, 0, 0) or syslog("err", "Can't seek() in file $failfile") and die();
+    print FAILFILE $out or syslog("err", "Can't print() to file $failfile") and die();
+    truncate(FAILFILE, tell(FAILFILE)) or syslog("err", "Can't truncate() file $failfile") and die();
+    close(FAILFILE);
+    
+    return(0);
+}
+
 
 sub is_in_database
 {
@@ -261,8 +377,7 @@ sub is_in_database
     return(0);
 }
 
-sub isInNet
-{
+sub isInNet {
     my $ip = toInteger(shift);
     my $net = toInteger(shift);
     my $netmask = toInteger(shift);
@@ -274,8 +389,7 @@ sub isInNet
     }
 }
 
-sub toInteger
-{
+sub toInteger {
     my $adress = shift;
     my $ret = 0;
     my @parts = split(/\./, $adress);
@@ -288,3 +402,4 @@ sub toInteger
 
     return($ret);
 }
+

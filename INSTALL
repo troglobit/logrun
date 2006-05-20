@@ -36,21 +36,30 @@ if($system =~ /Linux/) {
   exit(1);
 }
 
-print "I'm creating /dev/logrun FIFO file: ";
-system("mkfifo /dev/logrun") == 0 or print "Can't create /dev/logrun FIFO file: $!\nYou should be root now!!!\n";
-system("chmod 600 /dev/logrun") == 0 or print "Can't change /dev/logrun mode for 600: $!\n\n";
-print "OK\n";
+if ( ! -d "/var/lib/logrun") { 
+  system("mkdir /var/lib/logrun") == 0 or die("Can't create directory /var/lib/logrun: $!\nYou should be root now!!!\n");
+}
+if ( ! -p "/var/lib/logrun/FIFO") { 
+  print "I'm creating /var/lib/logrun/FIFO file: ";
+  system("mkfifo /var/lib/logrun/FIFO") == 0 or die("Can't create /var/lib/logrun/FIFO file: $!\nYou should be root now!!!\n");
+  print "OK\n";
+}
+system("chmod 600 /var/lib/logrun/FIFO") == 0 or die("Can't change /var/lib/logrun/FIFO mode for 600: $!\n\n");
 
-print "I'm changing Your syslog: ";
-if(open(SYSLOG, ">>/etc/syslog.conf") != 0) {
-  print SYSLOG "\nauth,authpriv.*\t\t\t|/dev/logrun";
-  close(SYSLOG);
-  print "OK\n";
-  print "I'm reloading Your syslogd: ";
-  system("ps ax|grep syslog|grep -v grep|awk \'\{system\(\"kill -1 \"\$1\)\}\'");
-  print "OK\n";
+if (system("grep /var/lib/logrun/FIFO /etc/syslog.conf > /dev/null" )) {
+  print "I'm changing Your syslog: ";
+  if(open(SYSLOG, ">>/etc/syslog.conf") != 0) {
+    print SYSLOG "\nauth,authpriv.*\t\t\t|/var/lib/logrun/FIFO\n";
+    close(SYSLOG);
+    print "OK\n";
+    print "I'm reloading Your syslogd: ";
+#    system("ps ax|grep syslog|grep -v grep|awk \'\{system\(\"kill -1 \"\$1\)\}\'");
+    system("/etc/init.d/sysklogd restart");
+  } else {
+    print "FAILED!!! - change Your syslog.conf file manually and add there line:\n\tauth,authpriv.*\t\t\t|/var/lib/logrun/FIFO\n";
+  }
 } else {
-  print "FAILED!!! - change Your syslog.conf file manually and add there line:\n\tauth,authpriv.*\t\t\t|/dev/logrun\n";
+  print "No need to change syslog.conf\n";
 }
 
 if($YOURSYSTEM eq "2") {
@@ -79,44 +88,69 @@ if($YOURSYSTEM eq "2") {
 }
 
 
-system("chown root ./logrun") == 0 or print "Can't change ./logrun owner for root: $!\n\n";
-system("chmod 700 ./logrun") == 0 or print "Can't change ./logrun mode for 700: $!\n\n";
-system("cp -f ./logrun /usr/sbin/logrun");
+system("cp -f -p ./logrun /usr/sbin/logrun");
+system("chown root /usr/sbin/logrun") == 0 or print "Can't change ./logrun owner for root: $!\n\n";
+system("chmod 700 /usr/sbin/logrun") == 0 or print "Can't change ./logrun mode for 700: $!\n\n";
 
-print "I'm creating /var/log/logrun file: ";
-system("touch /var/log/logrun") == 0 or print "Can't touch /var/log/logrun: $!\n\n";
-system("chmod 600 /var/log/logrun") == 0 or print "Can't change /var/log/logrun mode for 600: $!\n\n";
-system("chown root /var/log/logrun") == 0 or print "Can't change /var/log/logrun owner for root: $!\n\n";
-print "OK\n";
+if ( ! -f "/var/log/logrun") {
+  print "I'm creating /var/log/logrun file: ";
+  system("touch /var/log/logrun") == 0 or print "Can't touch /var/log/logrun: $!\n\n";
+  system("chmod 600 /var/log/logrun") == 0 or print "Can't change /var/log/logrun mode for 600: $!\n\n";
+  system("chown root /var/log/logrun") == 0 or print "Can't change /var/log/logrun owner for root: $!\n\n";
+  print "OK\n";
+} else {
+  print "NOTE! /var/log/logrun already exists. Please remove it or assure file contents is sane.\n";
+  print "(Next log will probably reveal that)\n";
+}
 
+if ( -f "/etc/logrun.conf" ) {
+  print "I'm creating a new template /etc/logrun.conf.tmpl file: ";
+  print "Please review for new options!\n";
+  $filename = "/etc/logrun.conf.tmpl";
+} else {
+  print "I'm creating the /etc/logrun.conf: ";
+  $filename = "/etc/logrun.conf";
+}
 
 if($YOURSYSTEM eq "2") {
   #BSD
-  print "I'm creating /etc/logrun.conf file: ";
-  if(open(LOGCONF, ">/etc/logrun.conf") != 0) {
+  if(open(LOGCONF, ">$filename") != 0) {
     print LOGCONF <<EOT;
-#file where syslogd logs data for logrun
-\$logfile="/dev/logrun";
+# Fifo for syslogd to write all logs to.
+\$logfile="/var/lib/logrun/FIFO";
 
-#failed logins database
+# Failed logins database
 \$failfile="/var/log/logrun";
 
-#how many times ONE host can try to fail login
-\$failedattempts=4;
+#Previously blocked hosts' database
+\$blacklist="/var/log/logrun.blacklist";
+
+# Facility for syslog (man syslog.conf)
+\$facility="daemon";
+
+# PID file location
+\$pidfile="/var/run/logrun.pid";
+
+# Number of times ONE host can try and fail login
+\$failedattempts=5;
+
+# Minimum number of days to keep host blocked (0 to disable)
+\$blockdays = 88;
 
 #don't add these IP numbers into database - You MUST to add netmask after IP
 \@dont_add_into_database = ( "127.0.0.0/255.0.0.0", "192.168.0.0/255.255.255.0");
 
 #at the end of this value func update_iptables adds IP
-\$command_iptables="/sbin/pfctl -t crackers -T add ";
+\$ipv4_firewall="/sbin/pfctl -t crackers -T add ";
 
-#facility for syslog (man syslog.conf)
-\$facility="daemon";
+#Remove command
+\$ipv4_rm_firewall ="/sbin/pfctl -t crackers -T delete ";
 
-#PID file location
-\$pidfile="/var/run/logrun.pid";
+##Purge before restart
+#\$command_prestart_iptables ="/sbin/pfctl -t crackers -T zero ";
+
 EOT
-
+    print "OK\n";
   } else {
     print "FAILED!!! - copy logrun.conf to /etc/logrun.conf and edit it\n";
   }
@@ -124,13 +158,11 @@ EOT
   print "I'm changing Your startup scripts: ";
   if(open(RCS, ">>/etc/rc.local") != 0) {
     print RCS "\n/usr/sbin/logrun\n";
-    print RCS "/usr/bin/awk \'\{if \(\$2 >= 4\) system\(\"/sbin/pfctl -t crackers -T add \" \$1\)\}\' /var/log/logrun";
     close(RCS);
     print "OK\n";
   } else {
-    print "FAILED!!! - change Your startup scripts and add there lines:\n";
+    print "FAILED!!! - change Your startup scripts and add there line:\n";
     print "\t/usr/sbin/logrun\n";
-    print "\t/usr/bin/awk \'\{if \(\$2 >= 4\) system\(\"/sbin/pfctl -t crackers -T add \" \$1\)\}\' /var/log/logrun";
   }
   print "I'm copying man file: ";
   system("cp -f ./logrun.8 /usr/local/man/man8/logrun.8");
@@ -140,46 +172,62 @@ EOT
   print "OK\n";
 } else {
   #Linux
-  print "I'm creating /etc/logrun.conf file: ";
-  if(open(LOGCONF, ">/etc/logrun.conf") != 0) {
+  if(open(LOGCONF, ">$filename") != 0) {
     print LOGCONF <<EOT;
-#file where syslogd logs data for logrun
-\$logfile="/dev/logrun";
+# Fifo for syslogd to write all logs to.
+\$logfile="/var/lib/logrun/FIFO";
 
-#failed logins database
+# Failed logins database
 \$failfile="/var/log/logrun";
 
-#how many times ONE host can try to fail login
+#Previously blocked hosts' database
+\$blacklist="/var/log/logrun.blacklist";
+
+# Facility for syslog (man syslog.conf)
+\$facility="daemon";
+
+# PID file location
+\$pidfile="/var/run/logrun.pid";
+
+# Number of times ONE host can try and fail login
 \$failedattempts=4;
+
+# Minimum number of days to keep host blocked (0 to disable)
+\$blockdays = 88;
 
 #don't add these IP numbers into database - You MUST to add netmask after IP
 \@dont_add_into_database = ( "127.0.0.0/255.0.0.0", "192.168.0.0/255.255.255.0");
 
 #at the end of this value func update_iptables adds IP
-\$command_iptables="/sbin/iptables -I INPUT -j DROP -s ";
-\$command_ip6tables="/sbin/ip6tables -I INPUT -j DROP -s ";
+\$ipv4_firewall="/sbin/iptables -I INPUT -j DROP -s ";
+#\$ipv6_firewall="/sbin/ip6tables -I INPUT -j DROP -s "; # Bug in IP6 handling. (Debian/Sarge)
+\$ipv6_firewall=\$ipv4_firewall;
 
-#facility for syslog (man syslog.conf)
-\$facility="daemon";
+#Remove command
+\$ipv4_rm_firewall = "iptables -D INPUT -j DROP -s ";
 
-#PID file location
-\$pidfile="/var/run/logrun.pid";
+##Purge before restart
+#\$command_prestart_iptables = "iptables -F INPUT";
+
 EOT
-
+    print "OK\n";
   } else {
     print "FAILED!!! - copy logrun.conf to /etc/logrun.conf and edit it\n";
   }
 
-  print "I'm changing Your startup scripts: ";
-  if(open(RCS, ">>/etc/init.d/rcS") != 0) {
-    print RCS "\n/usr/sbin/logrun\n";
-    print RCS "/usr/bin/awk \'\{if \(\$2 >= 4\) system\(\"/sbin/iptables -I INPUT -j DROP -s \" \$1\)\}\' /var/log/logrun";
-    close(RCS);
-    print "OK\n";
+  if ( system("grep /usr/sbin/logrun /etc/init.d/rcS > /dev/null" ) ) {
+    print "I'm changing Your startup script (rcS): ";
+    if(open(RCS, ">>/etc/init.d/rcS") != 0) {
+      print RCS "\n/usr/sbin/logrun\n";
+      close(RCS);
+      print "OK\n";
+    } else {
+      print "FAILED!!! - change Your startup scripts and add there lines:\n";
+      print "\t/usr/sbin/logrun\n";
+      print "\t/usr/bin/awk \'\{if \(\$2 >= 4\) system\(\"/sbin/iptables -I INPUT -j DROP -s \" \$1\)\}\' /var/log/logrun";
+    }
   } else {
-    print "FAILED!!! - change Your startup scripts and add there lines:\n";
-    print "\t/usr/sbin/logrun\n";
-    print "\t/usr/bin/awk \'\{if \(\$2 >= 4\) system\(\"/sbin/iptables -I INPUT -j DROP -s \" \$1\)\}\' /var/log/logrun";
+    print "/usr/sbin/logrun already in rcS script\n";
   }
   print "I'm copying man file: ";
   system("cp -f ./logrun.8 /usr/share/man/man8/logrun.8");
