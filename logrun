@@ -77,7 +77,7 @@ sub monitor_logfile
            or
            $txt =~ /(authentication) failure;(.*) rhost=(.*) {2}user=(.*)$/) { # !
             $ip = $3;
-            if($ip ne ' ') {
+            if($ip ne '') {
                 if(update_failfile($ip)) {  # Possibly pushing zombies
                     update_firewall($ip);
                 }
@@ -232,8 +232,8 @@ sub update_failfile
             # Purge logfile from inactive hosts.
             
             if ($t_old[1] >= $failedattempts) {
-		push(@zombies, $t_old[0]);
-	    };
+                push(@zombies, $t_old[0]);
+            };
             
             open (BLACKLIST, ">> $blacklist");
             print BLACKLIST $txt or syslog("err", "Can't write to blacklist ($blacklist");
