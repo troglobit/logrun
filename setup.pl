@@ -72,6 +72,8 @@ sub create_conf_file ($$$$)
 
     if(open(LOGCONF, ">$conffile") != 0) {
         print (LOGCONF <<EOT);
+# Authfail config file is in -*-Perl-*- format
+
 # Fifo for syslogd to write all logs to.
 \$logfile = "$MYFIFO";
 
