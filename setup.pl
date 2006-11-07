@@ -50,9 +50,9 @@ $RC_FILE_BSD = "/etc/rc.local";
 $DEFAULT_DROP_LINUX  = "/sbin/iptables -I INPUT -j DROP -s ";
 #$DEFAULT_DROP_LINUX  = "/sbin/shorewall drop ";
 $DEFAULT_PURGE_LINUX = "/sbin/iptables -D INPUT -j DROP -s ";
-#$DEFAULT_PURGE_LINUX = "/sbin/shorewall clear ";
+#$DEFAULT_PURGE_LINUX = "/sbin/shorewall allow ";
 $DEFAULT_RESTART_LINUX = "/sbin/iptables -F INPUT";
-#$DEFAULT_RESTART_LINUX = "/sbin/shorewall refresh";
+#$DEFAULT_RESTART_LINUX = "/sbin/shorewall clear";
 $RC_FILE_LINUX = "/etc/init.d/rcS";
 
 use constant {
