@@ -31,7 +31,7 @@ $MYFIFO     = $MYDIR . "/FIFO";
 $SYSLOGCONF = "/etc/syslog.conf";
 $SYSLOGD    = "/etc/init.d/sysklogd";
 $FAILTMPL   = "/tmp/logrun";
-$FAILFILE   = "/var/lib/logrun";
+$FAILFILE   = "/var/lib/logrun/db";
 $BLACKLIST  = $FAILFILE . ".blacklist";
 $PIDFILE    = "/var/run/logrun.pid";
 $LOGRUNCONF = "/etc/logrun.conf";
@@ -48,8 +48,11 @@ $RC_FILE_BSD = "/etc/rc.local";
 
 # Firewall defaults drop IP and purge all dropped IPs
 $DEFAULT_DROP_LINUX  = "/sbin/iptables -I INPUT -j DROP -s ";
+#$DEFAULT_DROP_LINUX  = "/sbin/shorewall drop ";
 $DEFAULT_PURGE_LINUX = "/sbin/iptables -D INPUT -j DROP -s ";
-$DEFAULT_RESTART_LINUX = "iptables -F INPUT";
+#$DEFAULT_PURGE_LINUX = "/sbin/shorewall clear ";
+$DEFAULT_RESTART_LINUX = "/sbin/iptables -F INPUT";
+#$DEFAULT_RESTART_LINUX = "/sbin/shorewall refresh";
 $RC_FILE_LINUX = "/etc/init.d/rcS";
 
 use constant {
