@@ -40,8 +40,8 @@ systems and OpenBSD.  Support for more systems is most welcome! :)
 Origin & References
 -------------------
 
-Logrun is based on the excellent [authfail](http://www.bmk.bz/authfail/)
-script by Bartosz M. Krajnik.
+Logrun is based on the excellent [authfail][] script by Bartosz
+M. Krajnik.
 
 Logrun started out as a fork of authfail in 2005, then in Subversion and
 later converted to Bzr.  Today Logrun is maintained at [GitHub][].
@@ -50,5 +50,6 @@ Authors:
 - [Joachim Nilsson][]
 - Johan Risberg
 
-[Joachim Nilsson]:  http://troglobit.com
 [GitHub]:           https://github.com/troglobit/logrun
+[authfail]:         http://www.sourcefiles.org/System/Daemons/Networking/authfail-1.1.4.tgz.shtml
+[Joachim Nilsson]:  http://troglobit.com
