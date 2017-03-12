@@ -1,52 +1,44 @@
 .\"                                      Hey, EMACS: -*- nroff -*-
-.\" First parameter, NAME, should be all caps
-.\" Second parameter, SECTION, should be 1-8, maybe w/ subsection
-.\" other parameters are allowed: see man(7), man(1)
-.TH LOGRUN 8
 .\" Please adjust this date whenever revising the manpage.
-.\"
-.\" Some roff macros, for reference:
-.\" .nh        disable hyphenation
-.\" .hy        enable hyphenation
-.\" .ad l      left justify
-.\" .ad b      justify to both left and right margins
-.\" .nf        disable filling
-.\" .fi        enable filling
-.\" .br        insert line break
-.\" .sp <n>    insert n+1 empty lines
-.\" for manpage-specific macros, see man(7)
-.SH NAME
-logrun \- daemon to scan logfiles for naughty activity and take proper actions.
-
-.SH SYNOPSIS
-.B logrun
-.SH DESCRIPTION
-This manual page documents briefly the
-.B logrun
-command.
-.PP
-.\" TeX users may be more comfortable with the \fB<whatever>\fP and
-.\" \fI<whatever>\fP escape sequences to invode bold face and italics,
-.\" respectively.
-\fBlogrun\fP is a program that goes with real time updating on
-FIFO file and, in its basic form, adds IP into netfilter with DROP/REJECT
-policy in real time.
-The FIFO file is \fB/var/lib/logrun/FIFO\fP. The rejected hosts database is
-located in \fB/var/log/logrun\fP.
-.PP
-Each time a given host will do an "authentication failure" via syslog,
-\fBlogrun\fP will count it. If this occure more than the parameters
-given to \fBlogrun\fP, the given host will be REJECTED/DROPED via
-Netfilter.
-.PP
-\fBlogrun\fP may be configured using the \fB/etc/logrun.conf\fP
+.Dd Mar 12, 2017
+.Dt LOGRUN 8
+.Os
+.Sh NAME
+.Nm logrun
+.Nd scans logfiles for naughty activity and takes proper actions
+.Sh SYNOPSIS
+.Nm logrun
+.Sh DESCRIPTION
+This manual page briefly documents the
+.Nm
+daemon.
+.Pp
+.Nm
+is a UNIX daemon that monitors the system log and scans for suspicious
+activity.  It can for instance instruct the system firewall to drop
+connections from continuous failed login attempts.  Any action, to any
+pattern, is possible to execute.
+.Pp
+By default
+.Nm
+instructs netfilter to drop the client IP after ten (10) failed SSH
+connections.  All dropped client IP addresses are logged to the log
 file.
-.SH OPTIONS
-None.
-.SH SEE ALSO
-The program is documented fully by its author (see source code).
-.SH AUTHOR
-The origin of this program was originally written by Bartosz M. Krajnik 
-<bartek@bmk.bz>, and known as authfail, but is since changed by Joachim
-Nilsson to logrun, having an idea that any event, not only authentication
-failures, can be worth monitoring.
+.Pp
+.Nm
+may be configured using the
+.Pa /etc/logrun.conf
+file.
+.Sh FILES
+.Bl -tag -width /var/lib/logrun/FIFO -compact
+.It Pa /etc/logrun.conf
+.It Pa /var/log/logrun
+.It Pa /var/lib/logrun/FIFO
+.El
+.Sh AUTHORS
+The origin of
+.Nm
+is the authfail program, by Bartosz M. Krajnik
+.Aq bartek@bmk.bz .
+Joachim Nilsson and Johan Risberg created logrun, with the idea that any
+event, not only authentication failures, can be worth monitoring.
